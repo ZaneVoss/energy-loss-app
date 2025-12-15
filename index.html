@@ -406,6 +406,21 @@
         // Initialize
         getSavedConfigs();
         updateCircuits();
+
+        // Service Worker registration
+        window.addEventListener('load', () => {
+            registerSW();
+        });
+        async function regusterSW() {
+            if ('serviceWorker' in navigator) {
+                try {
+                    await navigator.serviceWorker.register('sw.js');
+                }
+                catch (e) {
+                    console.log('SW registration failed');
+                }
+            }
+        }
     </script>
 </body>
 </html>
