@@ -2,7 +2,7 @@
   "name": "Water Panel Energy Loss Calculator",
   "short_name": "Energy Calc",
   "description": "Tool for calculating heat removal in water-cooled equipment",
-  "start_url": "./Water_Panel_Heat_Losses_V13.html",
+  "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#d1cfcf",
   "theme_color": "#cc4a1f",

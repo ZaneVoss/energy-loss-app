@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Steel Plant Heat Removal Calculator</title>
+    <link rel="apple-touch-icon" sizes="180x180" href="./apple-touch-icon.png">
+    <link rel="apple-touch-icon-precomposed" sizes="180x180" href="./apple-touch-icon-precomposed.png">
+    <link rel="apple-touch-icon" sizes="120x120" href="./apple-touch-icon-120x120.png">
+    <link rel="apple-touch-icon-precomposed" sizes="120x120" href="./apple-touch-icon-120x120-precomposed.png">
+    <link rel="icon" href="./favicon.ico" type="image/x-icon">
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 20px; background: #f5f5f5; }
+        h1 { text-align: center; color: #333; }
+        label { display: inline-block; width: 120px; font-weight: bold; }
+        input, select { margin: 5px; padding: 5px; border: 1px solid #ccc; border-radius: 4px; }
+        button { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; margin: 10px 5px; }
+        button:hover { background: #0056b3; }
+        .remove-btn { background: #dc3545; padding: 5px 10px; font-size: 0.9em; margin: 5px; }
+        .remove-btn:hover { background: #c82333; }
+        .save-load { background: #ffc107; color: #000; border: 1px solid #ffc107; }
+        .save-load:hover { background: #e0a800; }
+        .delete-btn { background: #dc3545; color: white; padding: 5px 10px; font-size: 0.8em; margin-left: 5px; }
+        .delete-btn:hover { background: #c82333; }
+        .circuit { border: 1px solid #ddd; padding: 15px; margin: 10px 0; border-radius: 8px; background: white; position: relative; }
+        .results { margin-top: 20px; padding: 15px; background: #e8f5e8; border-radius: 8px; }
+        table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: right; }
+        th { background: #f2f2f2; font-weight: bold; text-align: center; }
+        tr:nth-child(even) { background: #f9f9f9; }
+        .total-row td { font-weight: bold; background: #d4edda; border-top: double 3px #006400; }
+        .name-col { text-align: left; width: 25%; }
+        .error { color: red; font-size: 0.9em; }
+        .export-btn { background: #28a745; margin: 10px; }
+        .export-btn:hover { background: #218838; }
+        #loadConfigs { margin: 10px; }
+        @media (max-width: 600px) { table { font-size: 0.9em; } th, td { padding: 4px; } }
+    </style>
+</head>
+<body>
+    <h1>Water-Cooled Circuits Heat Removal Tool</h1>
+    <p style="text-align: center; color: #666; font-size: 0.9em; margin-top: -10px; margin-bottom: 20px;">Copyright (c) CIX, Inc. 2025</p>
+    <label for="numCircuits">Number of Circuits:</label>
+    <select id="numCircuits" onchange="updateCircuits()">
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="10">10</option>
+        <option value="15">15</option>
+        <option value="20">20</option>
+        <option value="25">25</option>
+    </select>
+    <br>
+    <label for="loadConfigs">Load Saved Config:</label>
+    <select id="loadConfigs" onchange="loadConfig()">
+        <option value="">-- Select Config --</option>
+    </select>
+    <button class="save-load" onclick="saveConfig()" title="Save current setup to browser storage">Save Config</button>
+    <br><br>
+    <div id="circuitsContainer"></div>
+    <button onclick="calculateHeat()">Calculate Heat Removal</button>
+    <button onclick="resetAll()">Reset All</button>
+    <div id="results" class="results" style="display: none;"></div>
+    <script>
+        const Cp = 4184; // J/kg°C
+        const gpmToKgs = 0.0630902; // kg/s per GPM
+        const lpmToKgs = 0.0166667; // kg/s per LPM
+        let currentResults = null; // Global for export access
+        let savedInputs = {}; // Runtime persistence: {1: {name: '...', flow: '...', ...}}
+        let isLoading = false; // Flag to skip save during load
+
+        // IndexedDB setup for more reliable persistence on iOS
+        const dbName = 'HeatCalcDB';
+        const storeName = 'configs';
+        let db;
+
+        function openDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(dbName, 1);
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => resolve(request.result);
+                request.onupgradeneeded = (event) => {
+                    event.target.result.createObjectStore(storeName);
+                };
+            });
+        }
+
+        async function getAllConfigs() {
+            db = await openDB();
+            return new Promise((resolve) => {
+                const transaction = db.transaction(storeName, 'readonly');
+                const store = transaction.objectStore(storeName);
+                const request = store.getAllKeys();
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => resolve([]);
+            });
+        }
+
+        async function saveConfigToDB(name, config) {
+            db = await openDB();
+            const transaction = db.transaction(storeName, 'readwrite');
+            const store = transaction.objectStore(storeName);
+            store.put(config, name);
+        }
+
+        async function loadConfigFromDB(name) {
+            db = await openDB();
+            return new Promise((resolve) => {
+                const transaction = db.transaction(storeName, 'readonly');
+                const store = transaction.objectStore(storeName);
+                const request = store.get(name);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => resolve(null);
+            });
+        }
+
+        async function deleteConfigFromDB(name) {
+            db = await openDB();
+            const transaction = db.transaction(storeName, 'readwrite');
+            const store = transaction.objectStore(storeName);
+            store.delete(name);
+        }
+
+        // Config management (updated to use IndexedDB)
+        async function getSavedConfigs() {
+            const keys = await getAllConfigs();
+            const select = document.getElementById('loadConfigs');
+            select.innerHTML = '<option value="">-- Select Config --</option>';
+            keys.forEach(key => {
+                const option = document.createElement('option');
+                option.value = key;
+                option.textContent = `${key} `;
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'delete-btn';
+                deleteBtn.textContent = '×';
+                deleteBtn.onclick = (e) => { e.stopPropagation(); deleteConfig(key); };
+                option.appendChild(deleteBtn);
+                select.appendChild(option);
+            });
+        }
+
+        async function deleteConfig(name) {
+            if (confirm(`Delete "${name}"?`)) {
+                await deleteConfigFromDB(name);
+                getSavedConfigs(); // Refresh list
+                if (document.getElementById('loadConfigs').value === name) {
+                    document.getElementById('loadConfigs').value = '';
+                }
+            }
+        }
+
+        async function saveConfig() {
+            const name = prompt('Save config as (e.g., EAF_Full_Bank):') || '';
+            if (!name) return;
+            const num = parseInt(document.getElementById('numCircuits').value);
+            saveCurrentInputs();
+            const config = { numCircuits: num, inputs: { ...savedInputs } }; // Deep copy
+            const existing = await loadConfigFromDB(name);
+            if (existing) {
+                if (!confirm(`Overwrite "${name}"?`)) return;
+            }
+            await saveConfigToDB(name, config);
+            getSavedConfigs(); // Refresh list
+            alert(`Saved "${name}" successfully.`);
+        }
+
+        async function loadConfig() {
+            const select = document.getElementById('loadConfigs');
+            const name = select.value;
+            if (!name) return;
+            const config = await loadConfigFromDB(name);
+            if (!config) return;
+            isLoading = true; // Flag to skip save in update
+            savedInputs = { ...config.inputs }; // Deep copy
+            document.getElementById('numCircuits').value = config.numCircuits;
+            updateCircuits(); // Rebuild and restore
+            isLoading = false;
+            alert(`Loaded "${name}". Recalculate for updated results.`);
+        }
+
+        function updateCircuits() {
+            if (!isLoading) {
+                saveCurrentInputs(); // Snapshot before rebuild (skip during load)
+            }
+            const num = parseInt(document.getElementById('numCircuits').value);
+            const container = document.getElementById('circuitsContainer');
+            container.innerHTML = '';
+            for (let i = 1; i <= num; i++) {
+                const div = document.createElement('div');
+                div.className = 'circuit';
+                div.id = `circuitDiv${i}`;
+                div.innerHTML = `
+                    <h3>Circuit ${i}</h3>
+                    <label>Circuit Name:</label>
+                    <input type="text" id="name${i}" value="" placeholder="e.g., EAF Roof" title="Custom name for this circuit">
+                    <br>
+                    <label>Flow Rate:</label>
+                    <input type="number" id="flow${i}" min="0" step="0.1" placeholder="e.g., 100" title="Enter flow rate">
+                    <select id="flowUnit${i}">
+                        <option value="GPM">GPM</option>
+                        <option value="LPM">LPM</option>
+                    </select>
+                    <br>
+                    <label>Temp Unit:</label>
+                    <select id="tempUnit${i}">
+                        <option value="F">°F</option>
+                        <option value="C">°C</option>
+                    </select>
+                    <br>
+                    <label>Inlet Temp:</label>
+                    <input type="number" id="tin${i}" min="-50" max="200" step="0.1" placeholder="e.g., 70" title="Inlet temperature">
+                    <br>
+                    <label>Outlet Temp:</label>
+                    <input type="number" id="tout${i}" min="-50" max="200" step="0.1" placeholder="e.g., 80" title="Outlet temperature (must be > inlet)">
+                    <div id="error${i}" class="error"></div>
+                    <button class="remove-btn" onclick="removeCircuit(${i})" title="Remove this circuit">Remove</button>
+                `;
+                container.appendChild(div);
+            }
+            restoreInputs(num); // Reload saved values for existing circuits
+            document.getElementById('numCircuits').value = num; // Sync dropdown
+        }
+
+        function removeCircuit(circuitIndex) {
+            if (confirm(`Remove Circuit ${circuitIndex}? This will shift remaining circuits and preserve their data.`)) {
+                saveCurrentInputs(); // Snapshot first
+                delete savedInputs[circuitIndex]; // Drop the removed one
+                // Shift saved inputs down for indices > circuitIndex
+                const keys = Object.keys(savedInputs).map(Number).sort((a, b) => a - b);
+                for (let j = keys.length - 1; j >= circuitIndex; j--) {
+                    const key = keys[j];
+                    if (key > circuitIndex) {
+                        savedInputs[key - 1] = { ...savedInputs[key] };
+                        delete savedInputs[key];
+                    }
+                }
+                const newNum = Math.max(1, keys.length - 1 || 1); // At least 1
+                document.getElementById('numCircuits').value = newNum;
+                updateCircuits();
+            }
+        }
+
+        function saveCurrentInputs() {
+            const num = parseInt(document.getElementById('numCircuits').value);
+            for (let i = 1; i <= num; i++) {
+                savedInputs[i] = {
+                    name: document.getElementById(`name${i}`)?.value || `Circuit ${i}`,
+                    flow: document.getElementById(`flow${i}`)?.value || '',
+                    flowUnit: document.getElementById(`flowUnit${i}`)?.value || 'GPM',
+                    tempUnit: document.getElementById(`tempUnit${i}`)?.value || 'F',
+                    tin: document.getElementById(`tin${i}`)?.value || '',
+                    tout: document.getElementById(`tout${i}`)?.value || ''
+                };
+            }
+        }
+
+        function restoreInputs(num) {
+            for (let i = 1; i <= num; i++) {
+                if (savedInputs[i]) {
+                    document.getElementById(`name${i}`).value = savedInputs[i].name || `Circuit ${i}`;
+                    document.getElementById(`flow${i}`).value = savedInputs[i].flow || '';
+                    document.getElementById(`flowUnit${i}`).value = savedInputs[i].flowUnit || 'GPM';
+                    document.getElementById(`tempUnit${i}`).value = savedInputs[i].tempUnit || 'F';
+                    document.getElementById(`tin${i}`).value = savedInputs[i].tin || '';
+                    document.getElementById(`tout${i}`).value = savedInputs[i].tout || '';
+                } else {
+                    // Default for new circuits
+                    document.getElementById(`name${i}`).value = `Circuit ${i}`;
+                }
+            }
+        }
+
+        function validateCircuit(i) {
+            const tin = parseFloat(document.getElementById(`tin${i}`).value);
+            const tout = parseFloat(document.getElementById(`tout${i}`).value);
+            const flow = parseFloat(document.getElementById(`flow${i}`).value);
+            const errorDiv = document.getElementById(`error${i}`);
+            if (isNaN(tin) || isNaN(tout) || tin >= tout) {
+                errorDiv.textContent = 'Error: Valid temps required (Tout > Tin).';
+                return false;
+            }
+            if (isNaN(flow) || flow <= 0) {
+                errorDiv.textContent = 'Error: Valid positive flow required.';
+                return false;
+            }
+            errorDiv.textContent = '';
+            return true;
+        }
+
+        function exportToCSV() {
+            if (!currentResults) {
+                alert('No results to export. Please calculate first.');
+                return;
+            }
+            const { perCircuit, totalMW, totalRoundedKW, totalKWhMin } = currentResults;
+            const now = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+            const filename = `Heat_Removal_${now}.csv`;
+            let csvContent = 'Circuit Name,MW,kW,kWh/min\n';
+            perCircuit.forEach(c => {
+                const escapedName = `"${c.name.replace(/"/g, '""')}"`;
+                csvContent += `${escapedName},${c.MW},${c.kW},${c.kWhMin}\n`;
+            });
+            const escapedTotalName = '"Total"';
+            csvContent += `${escapedTotalName},${totalMW},${totalRoundedKW},${totalKWhMin}\n`;
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            if (link.download !== undefined) {
+                const url = URL.createObjectURL(blob);
+                link.setAttribute('href', url);
+                link.setAttribute('download', filename);
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        }
+
+        function calculateHeat() {
+            saveCurrentInputs(); // Ensure latest values saved before calc
+            const num = parseInt(document.getElementById('numCircuits').value);
+            let totalKW = 0;
+            let valid = true;
+            const perCircuit = [];
+            for (let i = 1; i <= num; i++) {
+                if (!validateCircuit(i)) {
+                    valid = false;
+                    continue;
+                }
+                const name = document.getElementById(`name${i}`).value.trim() || `Circuit ${i}`;
+                const flow = parseFloat(document.getElementById(`flow${i}`).value);
+                const flowUnit = document.getElementById(`flowUnit${i}`).value;
+                const tempUnit = document.getElementById(`tempUnit${i}`).value;
+                const tin = parseFloat(document.getElementById(`tin${i}`).value);
+                const tout = parseFloat(document.getElementById(`tout${i}`).value);
+                let massFlowKgs = (flowUnit === 'GPM') ? flow * gpmToKgs : flow * lpmToKgs;
+                let deltaT_C = (tempUnit === 'F') ? (tout - tin) * 5 / 9 : (tout - tin);
+                const Q_W = massFlowKgs * Cp * deltaT_C;
+                const Q_kW = Q_W / 1000;
+                const Q_MW = Q_kW / 1000;
+                const kWhMin = Q_kW / 60;
+                totalKW += Q_kW;
+                perCircuit.push({
+                    name,
+                    MW: parseFloat(Q_MW.toFixed(2)),
+                    kW: Math.round(Q_kW),
+                    kWhMin: Math.round(kWhMin)
+                });
+            }
+            if (!valid) {
+                alert('Please fix errors in input fields.');
+                return;
+            }
+            const totalMW = parseFloat((totalKW / 1000).toFixed(2));
+            const totalKWhMin = Math.round(totalKW / 60);
+            const totalRoundedKW = Math.round(totalKW);
+            // Store for export
+            currentResults = { perCircuit, totalMW, totalRoundedKW, totalKWhMin };
+            const html = `
+                <h3>Results</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th class="name-col">Circuit Name</th>
+                            <th>MW</th>
+                            <th>kW</th>
+                            <th>kWh/min</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${perCircuit.map(c => `
+                            <tr>
+                                <td class="name-col">${c.name}</td>
+                                <td>${c.MW}</td>
+                                <td>${c.kW}</td>
+                                <td>${c.kWhMin}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                    <tfoot>
+                        <tr class="total-row">
+                            <td>Total</td>
+                            <td>${totalMW}</td>
+                            <td>${totalRoundedKW}</td>
+                            <td>${totalKWhMin}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+                <button class="export-btn" onclick="exportToCSV()">Export to CSV</button>
+            `;
+            document.getElementById('results').innerHTML = html;
+            document.getElementById('results').style.display = 'block';
+        }
+
+        function resetAll() {
+            document.getElementById('numCircuits').value = 1;
+            savedInputs = {}; // Clear runtime persistence
+            currentResults = null; // Clear export data
+            document.getElementById('loadConfigs').value = ''; // Clear load select
+            updateCircuits();
+            document.getElementById('results').style.display = 'none';
+        }
+
+        // Initialize
+        getSavedConfigs();
+        updateCircuits();
+    </script>
+</body>
+</html>

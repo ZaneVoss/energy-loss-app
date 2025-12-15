@@ -1,7 +1,7 @@
 const CACHE_NAME = 'heat-calc-v3'; // Bump version number for updates
 const urlsToCache = [
   './',
-  './Water_Panel_Heat_Losses_V13.html',
+  './index.html',
   './manifest.json',
   './apple-touch-icon.png',
   './apple-touch-icon-precomposed.png',
